@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1013906840290",
+    "project_id": "rebike-30829",
+    "storage_bucket": "rebike-30829.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1013906840290:android:01d3e278158be7d46f1cbb",
+        "android_client_info": {
+          "package_name": "com.tharunkrishna.homebike"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDOzLV01C_s6W0d1TTcGaGxSifgFanKUbo"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
