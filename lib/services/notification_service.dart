@@ -86,7 +86,6 @@ Future<void> notificationTapBackground(
   NotificationResponse response,
 ) async {
   WidgetsFlutterBinding.ensureInitialized();
-  DartPluginRegistrant.ensureInitialized();
   await Firebase.initializeApp();
 
   if (response.actionId == 'stop_alert') {

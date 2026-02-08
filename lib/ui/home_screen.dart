@@ -55,132 +55,322 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isOffline(SystemState state) {
     if (state.lastSeen == 0) return true;
     final heartbeat = Duration(seconds: state.heartbeatSeconds);
-    final lastSeen = DateTime.fromMillisecondsSinceEpoch(state.lastSeen);
+    final lastSeen = DateTime.fromMillisecondsSinceEpoch(
+      _epochMsFromDb(state.lastSeen),
+    );
     return DateTime.now().difference(lastSeen) > heartbeat;
+  }
+
+  int _epochMsFromDb(int value) {
+    // If ESP32 sends epoch seconds, convert to ms. If already ms, keep.
+    return value < 100000000000 ? value * 1000 : value;
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('TharunKrishnaAPP'),
-        actions: [
-          IconButton(
-            onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+      body: StreamBuilder<SystemState>(
+        stream: _repo.watchSystem(),
+        builder: (context, snapshot) {
+          final state = snapshot.data ??
+              const SystemState(
+                armed: false,
+                alert: false,
+                lastSeen: 0,
+                lastMotion: 0,
+                deviceUid: '',
+                heartbeatSeconds: 20,
               );
-            },
-            icon: const Icon(Icons.settings),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: StreamBuilder<SystemState>(
-            stream: _repo.watchSystem(),
-            builder: (context, snapshot) {
-              final state = snapshot.data ??
-                  const SystemState(
-                    armed: false,
-                    alert: false,
-                    lastSeen: 0,
-                    lastMotion: 0,
-                    deviceUid: '',
-                    heartbeatSeconds: 20,
-                  );
-              final scheme = Theme.of(context).colorScheme;
+          final scheme = Theme.of(context).colorScheme;
 
-              if (state.alert) {
-                WakelockPlus.enable();
-              } else {
-                WakelockPlus.disable();
-              }
+          if (state.alert) {
+            WakelockPlus.enable();
+          } else {
+            WakelockPlus.disable();
+          }
 
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: 8),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: () async {
-                        await _auth.signOut();
-                      },
-                      child: const Text('Sign Out'),
-                    ),
+          final statusColor = _statusColor(state, scheme);
+
+          return Stack(
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      scheme.surface,
+                      const Color(0xFF0B1D2A),
+                      const Color(0xFF1A1034),
+                    ],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
                   ),
-                  Text(
-                    'Sleep Mode',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                ),
+              ),
+              Positioned(
+                top: -120,
+                right: -80,
+                child: _GlowOrb(color: scheme.primary, size: 240),
+              ),
+              Positioned(
+                bottom: -140,
+                left: -80,
+                child: _GlowOrb(color: scheme.secondary, size: 260),
+              ),
+              SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        state.armed ? 'ON' : 'OFF',
-                        style: Theme.of(context).textTheme.titleLarge,
+                      Row(
+                        children: [
+                          const Icon(Icons.shield_moon, size: 28),
+                          const SizedBox(width: 10),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'TharunKrishnaAPP',
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              Text(
+                                'TroonLabs',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: () async {
+                              await Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const SettingsScreen(),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.settings_outlined),
+                          ),
+                          TextButton(
+                            onPressed: () async {
+                              await _auth.signOut();
+                            },
+                            child: const Text('Sign Out'),
+                          ),
+                        ],
                       ),
-                      Switch(
-                        value: state.armed,
+                      const SizedBox(height: 30),
+                      Text(
+                        'Sleep Mode',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                      const SizedBox(height: 16),
+                      _AnimatedToggleCard(
+                        isOn: state.armed,
                         onChanged: (value) async {
                           await _repo.setArmed(value);
                         },
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 32),
-                  Text(
-                    'System Status',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 6),
+                      const SizedBox(height: 28),
+                      Text(
+                        'System Status',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
                   Text(
                     _isOffline(state)
-                        ? 'Last seen: ${state.lastSeen == 0 ? 'Never' : DateTime.fromMillisecondsSinceEpoch(state.lastSeen)}'
+                        ? 'Last seen: ${state.lastSeen == 0 ? 'Never' : DateTime.fromMillisecondsSinceEpoch(_epochMsFromDb(state.lastSeen))}'
                         : 'Heartbeat: ${state.heartbeatSeconds}s',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
-                    ),
-                    decoration: BoxDecoration(
-                      color: _statusColor(state, scheme).withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: _statusColor(state, scheme),
-                      ),
-                    ),
-                    child: Text(
-                      _statusLabel(state),
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            color: _statusColor(state, scheme),
-                          ),
-                    ),
-                  ),
-                  const Spacer(),
-                  if (state.alert)
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: _setAlertStopped,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: scheme.error,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
+                      const SizedBox(height: 12),
+                      AnimatedContainer(
+                        duration: const Duration(milliseconds: 300),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
                         ),
-                        child: const Text('Stop Alert'),
+                        decoration: BoxDecoration(
+                          color: statusColor.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: statusColor, width: 1.2),
+                          boxShadow: [
+                            BoxShadow(
+                              color: statusColor.withOpacity(0.45),
+                              blurRadius: 18,
+                              spreadRadius: -6,
+                            ),
+                          ],
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.bolt, color: statusColor),
+                            const SizedBox(width: 10),
+                            Text(
+                              _statusLabel(state),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleMedium
+                                  ?.copyWith(color: statusColor),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                ],
+                      const SizedBox(height: 16),
+                      if (!state.alert)
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton(
+                            onPressed: () async {
+                              await AlarmPlayer.instance.start();
+                              await NotificationService.showAlertNotification();
+                            },
+                            child: const Text('Test Alert'),
+                          ),
+                        ),
+                      const Spacer(),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 260),
+                        child: state.alert
+                            ? SizedBox(
+                                key: const ValueKey('alert'),
+                                width: double.infinity,
+                                child: FilledButton(
+                                  onPressed: _setAlertStopped,
+                                  style: FilledButton.styleFrom(
+                                    backgroundColor: scheme.error,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                  ),
+                                  child: const Text('Stop Alert'),
+                                ),
+                              )
+                            : const SizedBox.shrink(),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _GlowOrb extends StatelessWidget {
+  const _GlowOrb({required this.color, required this.size});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return IgnorePointer(
+      child: Container(
+        width: size,
+        height: size,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          gradient: RadialGradient(
+            colors: [
+              color.withOpacity(0.45),
+              color.withOpacity(0.08),
+              Colors.transparent,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AnimatedToggleCard extends StatelessWidget {
+  const _AnimatedToggleCard({
+    required this.isOn,
+    required this.onChanged,
+  });
+
+  final bool isOn;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final glow = isOn ? scheme.primary : scheme.outline;
+    final label = isOn ? 'ARMED' : 'DISARMED';
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 280),
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: glow, width: 1.4),
+        gradient: LinearGradient(
+          colors: [
+            const Color(0xFF0E1527),
+            const Color(0xFF111B33),
+            isOn ? const Color(0xFF153B4A) : const Color(0xFF1B1630),
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: glow.withOpacity(0.4),
+            blurRadius: 22,
+            spreadRadius: -6,
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0, end: isOn ? 1 : 0),
+            duration: const Duration(milliseconds: 300),
+            builder: (context, value, child) {
+              return Container(
+                width: 12,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: glow.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(99),
+                ),
+                alignment: Alignment.bottomCenter,
+                child: Container(
+                  width: 12,
+                  height: 12 + 22 * value,
+                  decoration: BoxDecoration(
+                    color: glow,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
+                ),
               );
             },
           ),
-        ),
+          const SizedBox(width: 16),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(letterSpacing: 1.6),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                isOn ? 'Security system armed' : 'System sleeping',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ],
+          ),
+          const Spacer(),
+          Switch(
+            value: isOn,
+            onChanged: onChanged,
+          ),
+        ],
       ),
     );
   }

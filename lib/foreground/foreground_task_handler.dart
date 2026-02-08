@@ -15,7 +15,6 @@ class ForegroundTaskHandler extends TaskHandler {
   @override
   Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
     WidgetsFlutterBinding.ensureInitialized();
-    DartPluginRegistrant.ensureInitialized();
     await Firebase.initializeApp();
     await NotificationService.initialize();
 
@@ -31,7 +30,7 @@ class ForegroundTaskHandler extends TaskHandler {
   }
 
   @override
-  Future<void> onDestroy(DateTime timestamp) async {
+  Future<void> onDestroy(DateTime timestamp, bool isTimeout) async {
     await _alertSub?.cancel();
     await AlarmPlayer.instance.stop();
   }

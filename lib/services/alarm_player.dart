@@ -12,7 +12,7 @@ class AlarmPlayer {
   Future<void> _ensureInitialized() async {
     if (_initialized) return;
     final session = await AudioSession.instance;
-    await session.configure(const AudioSessionConfiguration.alarm());
+    await session.configure(const AudioSessionConfiguration.music());
     await _player.setAudioSource(
       AudioSource.asset('assets/audio/alarm.wav'),
     );

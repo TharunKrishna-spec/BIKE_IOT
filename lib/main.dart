@@ -8,6 +8,7 @@ import 'services/notification_service.dart';
 import 'ui/home_screen.dart';
 import 'ui/login_screen.dart';
 import 'services/auth_service.dart';
+import 'ui/loading_screen.dart';
 
 @pragma('vm:entry-point')
 void startCallback() {
@@ -32,14 +33,21 @@ class TharunKrishnaApp extends StatelessWidget {
     return MaterialApp(
       title: 'TharunKrishnaAPP',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1F8A70),
-        ),
         useMaterial3: true,
+        brightness: Brightness.dark,
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFF5CF2FF),
+          secondary: Color(0xFFB28DFF),
+          surface: Color(0xFF0C1220),
+          error: Color(0xFFFF4D6D),
+        ),
       ),
       home: StreamBuilder(
         stream: authService.authStateChanges(),
         builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const LoadingScreen();
+          }
           final user = snapshot.data;
           if (user == null) {
             return const LoginScreen();

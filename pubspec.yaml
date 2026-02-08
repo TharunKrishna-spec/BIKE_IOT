@@ -37,6 +37,9 @@ dependencies:
   firebase_core: ^4.4.0
   firebase_database: ^12.1.2
   firebase_auth: ^6.0.0
+  flutter_map: ^7.0.2
+  latlong2: ^0.9.1
+  url_launcher: ^6.3.1
   flutter_foreground_task: ^9.2.0
   flutter_local_notifications_plus: ^17.2.5
   just_audio: ^0.10.5
