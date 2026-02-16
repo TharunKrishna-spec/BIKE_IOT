@@ -2,10 +2,10 @@
 #include <Firebase_ESP_Client.h>
 #include <time.h>
 #include <TinyGPS++.h>
+#include <esp_sleep.h>
 
-// Install libraries in Arduino IDE:
+// Libraries:
 // - Firebase_ESP_Client by Mobizt
-// - ArduinoJson
 // - TinyGPSPlus by Mikal Hart
 
 #define WIFI_SSID       "TharunKrishna_PC"
@@ -14,17 +14,31 @@
 #define API_KEY         "AIzaSyDOzLV01C_s6W0d1TTcGaGxSifgFanKUbo"
 #define DATABASE_URL    "https://rebike-30829-default-rtdb.firebaseio.com/"
 
-// Use a dedicated Firebase Auth user for the ESP32 device
+// Dedicated Firebase user for ESP32
 #define USER_EMAIL      "device1@re.com"
 #define USER_PASSWORD   "device1"
 
 #define SENSOR_PIN      27
 #define MOTION_COOLDOWN_MS 3000
+
 #define GPS_RX_PIN      35
 #define GPS_TX_PIN      32
 #define GPS_BAUD        9600
 #define GPS_UPDATE_MS   2000
-#define ENABLE_REMOTE_PROVISIONING 0
+
+// Deep sleep mode:
+// 1 = enabled (wake on vibration pin)
+// 0 = disabled (continuous mode)
+#define ENABLE_DEEP_SLEEP 1
+
+// If enabled, ESP sleeps while armed and only wakes on vibration.
+// App will show offline while sleeping (expected).
+#define SLEEP_WHEN_ARMED_ONLY 1
+
+#define HEARTBEAT_INTERVAL_MS 5000
+#define ALERT_SEND_RETRIES 5
+#define ALERT_RETRY_DELAY_MS 800
+#define ARMED_POLL_INTERVAL_MS 3000
 
 FirebaseData fbdo;
 FirebaseAuth auth;
@@ -34,37 +48,10 @@ HardwareSerial gpsSerial(2);
 
 unsigned long lastMotionMs = 0;
 unsigned long lastGpsUpdateMs = 0;
+unsigned long lastHeartbeatMs = 0;
+unsigned long lastArmedPollMs = 0;
 String deviceUid = "";
-
-void scanAndPrintVisibleSsids() {
-  Serial.println("Scanning nearby WiFi networks...");
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect();
-  delay(100);
-
-  const int n = WiFi.scanNetworks(false, true);
-  if (n <= 0) {
-    Serial.println("No WiFi networks found");
-    return;
-  }
-
-  Serial.print("Found ");
-  Serial.print(n);
-  Serial.println(" networks:");
-  for (int i = 0; i < n; i++) {
-    Serial.print("  [");
-    Serial.print(i);
-    Serial.print("] SSID=");
-    Serial.print(WiFi.SSID(i));
-    Serial.print(" RSSI=");
-    Serial.print(WiFi.RSSI(i));
-    Serial.print("dBm CH=");
-    Serial.print(WiFi.channel(i));
-    Serial.print(" ENC=");
-    Serial.println(WiFi.encryptionType(i));
-  }
-  WiFi.scanDelete();
-}
+bool trackingActive = false;
 
 void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
@@ -78,6 +65,7 @@ bool connectWiFi(const char* ssid, const char* password, unsigned long timeoutMs
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
   WiFi.begin(ssid, password);
+
   const unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED) {
     delay(300);
@@ -88,6 +76,7 @@ bool connectWiFi(const char* ssid, const char* password, unsigned long timeoutMs
       return false;
     }
   }
+
   Serial.print("WiFi connected. IP: ");
   Serial.println(WiFi.localIP());
   return true;
@@ -97,7 +86,7 @@ void syncTime() {
   configTime(0, 0, "time.google.com", "pool.ntp.org", "time.cloudflare.com");
   time_t now = time(nullptr);
   int tries = 0;
-  while (now < 1700000000) { // wait for valid epoch
+  while (now < 1700000000) {
     delay(500);
     now = time(nullptr);
     tries++;
@@ -118,12 +107,54 @@ long nowEpochSeconds() {
   return (long)time(nullptr);
 }
 
+bool readArmed(bool &armed) {
+  if (!Firebase.RTDB.getBool(&fbdo, "/system/armed")) {
+    Serial.print("Read armed error: ");
+    Serial.println(fbdo.errorReason());
+    return false;
+  }
+  armed = fbdo.boolData();
+  return true;
+}
+
+bool writeAlertPayload() {
+  const long nowEpoch = nowEpochSeconds();
+  for (int i = 0; i < ALERT_SEND_RETRIES; i++) {
+    const bool alertOk = Firebase.RTDB.setBool(&fbdo, "/system/alert", true);
+    const bool motionOk = Firebase.RTDB.setInt(&fbdo, "/system/lastMotion", nowEpoch);
+    const bool seenOk = Firebase.RTDB.setInt(&fbdo, "/system/lastSeen", nowEpoch);
+    if (alertOk && motionOk && seenOk) {
+      Serial.println("Alert payload sent successfully");
+      return true;
+    }
+    Serial.print("Alert payload retry ");
+    Serial.println(i + 1);
+    delay(ALERT_RETRY_DELAY_MS);
+  }
+  Serial.print("Alert payload failed: ");
+  Serial.println(fbdo.errorReason());
+  return false;
+}
+
+void configureWakeSource() {
+  // Wake when SENSOR_PIN goes HIGH (matching current motion logic).
+  esp_sleep_enable_ext0_wakeup((gpio_num_t)SENSOR_PIN, 1);
+}
+
+void goDeepSleepNow(const char* reason) {
+  Serial.print("Entering deep sleep: ");
+  Serial.println(reason);
+  Serial.flush();
+  delay(100);
+  esp_deep_sleep_start();
+}
+
 void updateGps() {
   while (gpsSerial.available() > 0) {
     gps.encode(gpsSerial.read());
   }
 
-  unsigned long nowMs = millis();
+  const unsigned long nowMs = millis();
   if ((nowMs - lastGpsUpdateMs) < GPS_UPDATE_MS) {
     return;
   }
@@ -162,15 +193,12 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("Booting...");
+
   WiFi.onEvent(onWiFiEvent);
   pinMode(SENSOR_PIN, INPUT);
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
 
-  scanAndPrintVisibleSsids();
-  Serial.println("WiFi connect start");
-  bool wifiConnected = connectWiFi(WIFI_SSID, WIFI_PASSWORD, 20000);
-
-  if (!wifiConnected) {
+  if (!connectWiFi(WIFI_SSID, WIFI_PASSWORD, 20000)) {
     Serial.println("No WiFi available. Rebooting in 5s...");
     delay(5000);
     ESP.restart();
@@ -179,10 +207,8 @@ void setup() {
   Serial.println("Firebase begin");
   config.api_key = API_KEY;
   config.database_url = DATABASE_URL;
-
   auth.user.email = USER_EMAIL;
   auth.user.password = USER_PASSWORD;
-
   Firebase.reconnectWiFi(true);
   Firebase.begin(&config, &auth);
 
@@ -197,67 +223,90 @@ void setup() {
   Serial.println();
   Serial.print("Firebase UID: ");
   Serial.println(auth.token.uid.c_str());
+
   deviceUid = auth.token.uid.c_str();
   Firebase.RTDB.setString(&fbdo, "/system/deviceUid", deviceUid);
   Firebase.RTDB.setBool(&fbdo, "/system/alert", false);
+
+  const long nowEpoch = nowEpochSeconds();
+  Firebase.RTDB.setInt(&fbdo, "/system/lastSeen", nowEpoch);
+
+#if ENABLE_DEEP_SLEEP
+  configureWakeSource();
+  const esp_sleep_wakeup_cause_t wakeReason = esp_sleep_get_wakeup_cause();
+  bool armed = false;
+  readArmed(armed);
+
+  if (wakeReason == ESP_SLEEP_WAKEUP_EXT0) {
+    Serial.println("Wake reason: vibration");
+    if (armed) {
+      if (writeAlertPayload()) {
+        trackingActive = true;
+        Serial.println("Tracking mode active: streaming GPS until disarmed");
+      } else {
+        Serial.println("Staying awake to retry alert in loop");
+      }
+    } else {
+      goDeepSleepNow("woke by vibration but system disarmed");
+    }
+  } else {
+    Serial.print("Wake reason: ");
+    Serial.println((int)wakeReason);
+    if (SLEEP_WHEN_ARMED_ONLY && armed) {
+      goDeepSleepNow("armed at boot; waiting for vibration");
+    }
+  }
+#endif
 }
 
 void loop() {
-  // Heartbeat
-  if (Firebase.RTDB.setInt(&fbdo, "/system/lastSeen", nowEpochSeconds())) {
-    Serial.println("Heartbeat updated");
-  } else {
-    Serial.print("Heartbeat error: ");
-    Serial.println(fbdo.errorReason());
+  if (WiFi.status() != WL_CONNECTED) {
+    connectWiFi(WIFI_SSID, WIFI_PASSWORD, 10000);
   }
 
-#if ENABLE_REMOTE_PROVISIONING
-  // Check provisioning updates
-  if (Firebase.RTDB.getString(&fbdo, "/provisioning/ssid")) {
-    String newSsid = fbdo.to<const char*>();
-    String newPass = "";
-    if (Firebase.RTDB.getString(&fbdo, "/provisioning/password")) {
-      newPass = fbdo.to<const char*>();
+  const unsigned long nowMs = millis();
+  if ((nowMs - lastHeartbeatMs) >= HEARTBEAT_INTERVAL_MS) {
+    lastHeartbeatMs = nowMs;
+    if (Firebase.RTDB.setInt(&fbdo, "/system/lastSeen", nowEpochSeconds())) {
+      Serial.println("Heartbeat updated");
+    } else {
+      Serial.print("Heartbeat error: ");
+      Serial.println(fbdo.errorReason());
     }
+  }
 
-    if (newSsid.length() > 0) {
-      Serial.println("Remote provisioning update detected. Rebooting...");
-      ESP.restart();
+  int motion = digitalRead(SENSOR_PIN);
+  if (motion == HIGH && (nowMs - lastMotionMs) > MOTION_COOLDOWN_MS) {
+    lastMotionMs = nowMs;
+
+    bool armed = false;
+    if (readArmed(armed) && armed) {
+      if (writeAlertPayload()) {
+        Serial.println("Motion detected -> alert true");
+#if ENABLE_DEEP_SLEEP
+        trackingActive = true;
+        Serial.println("Tracking mode active: streaming GPS until disarmed");
+#endif
+      }
     }
-  } else {
-    Serial.print("Provision read error: ");
-    Serial.println(fbdo.errorReason());
+  }
+
+  if (trackingActive) {
+    updateGps();
+  }
+
+#if ENABLE_DEEP_SLEEP
+  if ((nowMs - lastArmedPollMs) >= ARMED_POLL_INTERVAL_MS) {
+    lastArmedPollMs = nowMs;
+    bool armed = false;
+    if (readArmed(armed)) {
+      if (!armed) {
+        trackingActive = false;
+        goDeepSleepNow("disarmed; back to sleep");
+      }
+    }
   }
 #endif
 
-  int motion = digitalRead(SENSOR_PIN);
-  unsigned long now = millis();
-
-  if (motion == HIGH && (now - lastMotionMs) > MOTION_COOLDOWN_MS) {
-    lastMotionMs = now;
-
-    bool armed = false;
-    if (Firebase.RTDB.getBool(&fbdo, "/system/armed")) {
-      armed = fbdo.boolData();
-    }
-
-    if (armed) {
-      if (Firebase.RTDB.setBool(&fbdo, "/system/alert", true)) {
-        Serial.println("Alert set true");
-      } else {
-        Serial.print("Alert write error: ");
-        Serial.println(fbdo.errorReason());
-      }
-      if (Firebase.RTDB.setInt(&fbdo, "/system/lastMotion", nowEpochSeconds())) {
-        Serial.println("LastMotion updated");
-      } else {
-        Serial.print("LastMotion error: ");
-        Serial.println(fbdo.errorReason());
-      }
-      Serial.println("Motion detected -> alert true");
-    }
-  }
-
-  updateGps();
   delay(100);
 }
