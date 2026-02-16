@@ -53,6 +53,12 @@ class FirebaseRepo {
         lastMotion: 0,
         deviceUid: '',
         heartbeatSeconds: 20,
+        gpsLat: 0,
+        gpsLng: 0,
+        gpsFixTime: 0,
+        gpsSats: 0,
+        gpsHdop: 0,
+        gpsAltMeters: 0,
       );
     });
   }

@@ -1,0 +1,23 @@
+{
+  "system": {
+    "ownerUid": "sSZBeTXAKdOuyGHFK8FI6Phz40C2",
+    "deviceUid": "W65hhHbnYDW9dypJJMCMbltjji22",
+    "armed": false,
+    "alert": false,
+    "lastSeen": 0,
+    "lastMotion": 0,
+    "heartbeatSeconds": 20,
+    "gps": {
+      "lat": 0,
+      "lng": 0,
+      "fixTime": 0,
+      "altMeters": 0,
+      "sats": 0,
+      "hdop": 0
+    }
+  },
+  "provisioning": {
+    "ssid": "",
+    "password": ""
+  }
+}

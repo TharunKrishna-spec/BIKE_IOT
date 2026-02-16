@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../models/system_state.dart';
@@ -40,6 +43,24 @@ class _HomeScreenState extends State<HomeScreen> {
     await WakelockPlus.disable();
   }
 
+  Future<void> _openInMaps(SystemState state) async {
+    if (!_hasGpsFix(state)) return;
+    final uri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=${state.gpsLat},${state.gpsLng}',
+    );
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
+  bool _hasGpsFix(SystemState state) {
+    return state.gpsFixTime > 0 && state.gpsLat != 0 && state.gpsLng != 0;
+  }
+
+  bool _isGpsStale(SystemState state) {
+    if (!_hasGpsFix(state)) return true;
+    final fix = DateTime.fromMillisecondsSinceEpoch(_epochMsFromDb(state.gpsFixTime));
+    return DateTime.now().difference(fix) > const Duration(minutes: 2);
+  }
+
   String _statusLabel(SystemState state) {
     if (_isOffline(state)) return 'Device Offline';
     if (state.alert) return 'Alert Active';
@@ -55,15 +76,18 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isOffline(SystemState state) {
     if (state.lastSeen == 0) return true;
     final heartbeat = Duration(seconds: state.heartbeatSeconds);
-    final lastSeen = DateTime.fromMillisecondsSinceEpoch(
-      _epochMsFromDb(state.lastSeen),
-    );
+    final lastSeen = DateTime.fromMillisecondsSinceEpoch(_epochMsFromDb(state.lastSeen));
     return DateTime.now().difference(lastSeen) > heartbeat;
   }
 
   int _epochMsFromDb(int value) {
-    // If ESP32 sends epoch seconds, convert to ms. If already ms, keep.
     return value < 100000000000 ? value * 1000 : value;
+  }
+
+  String _formatEpoch(int epoch) {
+    if (epoch == 0) return 'Never';
+    final dt = DateTime.fromMillisecondsSinceEpoch(_epochMsFromDb(epoch));
+    return dt.toString();
   }
 
   @override
@@ -80,6 +104,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 lastMotion: 0,
                 deviceUid: '',
                 heartbeatSeconds: 20,
+                gpsLat: 0,
+                gpsLng: 0,
+                gpsFixTime: 0,
+                gpsSats: 0,
+                gpsHdop: 0,
+                gpsAltMeters: 0,
               );
           final scheme = Theme.of(context).colorScheme;
 
@@ -90,6 +120,9 @@ class _HomeScreenState extends State<HomeScreen> {
           }
 
           final statusColor = _statusColor(state, scheme);
+          final hasGps = _hasGpsFix(state);
+          final gpsStale = _isGpsStale(state);
+          final gpsBadgeColor = hasGps && !gpsStale ? scheme.primary : scheme.outline;
 
           return Stack(
             children: [
@@ -176,12 +209,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                       const SizedBox(height: 8),
-                  Text(
-                    _isOffline(state)
-                        ? 'Last seen: ${state.lastSeen == 0 ? 'Never' : DateTime.fromMillisecondsSinceEpoch(_epochMsFromDb(state.lastSeen))}'
-                        : 'Heartbeat: ${state.heartbeatSeconds}s',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
+                      Text(
+                        _isOffline(state)
+                            ? 'Last seen: ${_formatEpoch(state.lastSeen)}'
+                            : 'Heartbeat: ${state.heartbeatSeconds}s',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
                       const SizedBox(height: 12),
                       AnimatedContainer(
                         duration: const Duration(milliseconds: 300),
@@ -216,18 +249,116 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       const SizedBox(height: 16),
-                      if (!state.alert)
-                        SizedBox(
-                          width: double.infinity,
-                          child: OutlinedButton(
-                            onPressed: () async {
-                              await AlarmPlayer.instance.start();
-                              await NotificationService.showAlertNotification();
-                            },
-                            child: const Text('Test Alert'),
+                      Text(
+                        'Bike Location',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: gpsBadgeColor.withOpacity(0.15),
+                              border: Border.all(color: gpsBadgeColor),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              hasGps
+                                  ? (gpsStale ? 'GPS Stale' : 'GPS Live')
+                                  : 'No GPS Fix',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
                           ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Fix: ${_formatEpoch(state.gpsFixTime)}',
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        hasGps
+                            ? 'Lat: ${state.gpsLat.toStringAsFixed(6)}, Lng: ${state.gpsLng.toStringAsFixed(6)} | Sats: ${state.gpsSats}'
+                            : 'Waiting for GPS coordinates from Neo-6M',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                      const SizedBox(height: 10),
+                      SizedBox(
+                        height: 170,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(14),
+                          child: hasGps
+                              ? FlutterMap(
+                                  options: MapOptions(
+                                    initialCenter: LatLng(state.gpsLat, state.gpsLng),
+                                    initialZoom: 16,
+                                    interactionOptions: const InteractionOptions(
+                                      flags: InteractiveFlag.none,
+                                    ),
+                                  ),
+                                  children: [
+                                    TileLayer(
+                                      urlTemplate:
+                                          'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                      userAgentPackageName: 'com.tharunkrishna.homebike',
+                                    ),
+                                    MarkerLayer(
+                                      markers: [
+                                        Marker(
+                                          point: LatLng(state.gpsLat, state.gpsLng),
+                                          width: 40,
+                                          height: 40,
+                                          child: const Icon(Icons.location_on, size: 34),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                )
+                              : Container(
+                                  color: scheme.surfaceContainerHighest.withOpacity(0.35),
+                                  alignment: Alignment.center,
+                                  child: const Text('No map yet'),
+                                ),
                         ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: hasGps ? () => _openInMaps(state) : null,
+                              icon: const Icon(Icons.map_outlined),
+                              label: const Text('Open In Maps'),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: !state.alert
+                                  ? () async {
+                                      await AlarmPlayer.instance.start();
+                                      await NotificationService.showAlertNotification();
+                                    }
+                                  : null,
+                              child: const Text('Test Alert'),
+                            ),
+                          ),
+                        ],
+                      ),
                       const Spacer(),
+                      if (state.alert)
+                        Text(
+                          hasGps
+                              ? 'Alert location: ${state.gpsLat.toStringAsFixed(6)}, ${state.gpsLng.toStringAsFixed(6)}'
+                              : 'Alert active. GPS not fixed yet.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      const SizedBox(height: 8),
                       AnimatedSwitcher(
                         duration: const Duration(milliseconds: 260),
                         child: state.alert
@@ -238,9 +369,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                   onPressed: _setAlertStopped,
                                   style: FilledButton.styleFrom(
                                     backgroundColor: scheme.error,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 16,
-                                    ),
+                                    padding: const EdgeInsets.symmetric(vertical: 16),
                                   ),
                                   child: const Text('Stop Alert'),
                                 ),
@@ -353,10 +482,7 @@ class _AnimatedToggleCard extends StatelessWidget {
             children: [
               Text(
                 label,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(letterSpacing: 1.6),
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(letterSpacing: 1.6),
               ),
               const SizedBox(height: 6),
               Text(
