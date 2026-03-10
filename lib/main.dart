@@ -31,7 +31,7 @@ class TharunKrishnaApp extends StatelessWidget {
     final authService = AuthService();
 
     return MaterialApp(
-      title: 'TharunKrishnaAPP',
+      title: 'Bike-Kavalan',
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,

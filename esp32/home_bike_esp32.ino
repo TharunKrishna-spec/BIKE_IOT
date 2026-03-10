@@ -8,8 +8,8 @@
 // - Firebase_ESP_Client by Mobizt
 // - TinyGPSPlus by Mikal Hart
 
-#define WIFI_SSID       "TharunKrishna_PC"
-#define WIFI_PASSWORD   "12345678"
+#define WIFI_SSID       "Troons"
+#define WIFI_PASSWORD   "Troon1234"
 
 #define API_KEY         "AIzaSyDOzLV01C_s6W0d1TTcGaGxSifgFanKUbo"
 #define DATABASE_URL    "https://rebike-30829-default-rtdb.firebaseio.com/"
@@ -300,9 +300,18 @@ void loop() {
     lastArmedPollMs = nowMs;
     bool armed = false;
     if (readArmed(armed)) {
-      if (!armed) {
-        trackingActive = false;
-        goDeepSleepNow("disarmed; back to sleep");
+      // Deep-sleep state machine:
+      // - Standby mode: sleep only when armed (wait for vibration wake)
+      // - Tracking mode: keep awake while armed, sleep after disarm
+      if (trackingActive) {
+        if (!armed) {
+          trackingActive = false;
+          goDeepSleepNow("tracking stopped by disarm; back to sleep");
+        }
+      } else {
+        if (armed) {
+          goDeepSleepNow("armed standby; waiting for vibration");
+        }
       }
     }
   }

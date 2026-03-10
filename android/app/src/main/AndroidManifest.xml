@@ -7,7 +7,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <application
-        android:label="TharunKrishnaAPP"
+        android:label="Bike-Kavalan"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
